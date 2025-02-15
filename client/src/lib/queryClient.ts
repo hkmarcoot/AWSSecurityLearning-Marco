@@ -1,57 +1,53 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-async function throwIfResNotOk(res: Response) {
-  if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
-  }
-}
-
-export async function apiRequest(
-  method: string,
-  url: string,
-  data?: unknown | undefined,
-): Promise<Response> {
-  const res = await fetch(url, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
-
-  await throwIfResNotOk(res);
-  return res;
-}
-
-type UnauthorizedBehavior = "returnNull" | "throw";
-export const getQueryFn: <T>(options: {
-  on401: UnauthorizedBehavior;
-}) => QueryFunction<T> =
-  ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
-    const res = await fetch(queryKey[0] as string, {
-      credentials: "include",
-    });
-
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
-    }
-
-    await throwIfResNotOk(res);
-    return await res.json();
-  };
+import { QueryClient } from "@tanstack/react-query";
+import { courseData } from "./courseData";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      queryFn: getQueryFn({ on401: "throw" }),
-      refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
-    },
-    mutations: {
-      retry: false,
-    },
-  },
+      queryFn: async ({ queryKey }) => {
+        const [path] = queryKey as string[];
+        
+        if (path.startsWith('/api/modules/')) {
+          const moduleId = parseInt(path.split('/')[3]);
+          
+          if (path.endsWith('/quizzes')) {
+            return courseData.quizzes.filter(q => q.moduleId === moduleId);
+          } else {
+            return courseData.modules.find(m => m.id === moduleId);
+          }
+        }
+        
+        if (path === '/api/modules') {
+          return courseData.modules;
+        }
+        
+        if (path === '/api/progress') {
+          return [];
+        }
+        
+        throw new Error(`Unknown query path: ${path}`);
+      }
+    }
+  }
 });
+
+export const apiRequest = async (method: string, path: string, body?: any) => {
+  if (path.includes('submit-quiz')) {
+    const moduleId = parseInt(path.split('/')[3]);
+    const quizzes = courseData.quizzes.filter(q => q.moduleId === moduleId);
+    let correctAnswers = 0;
+    
+    Object.entries(body.answers).forEach(([quizId, answer]) => {
+      const quiz = quizzes.find(q => q.id === parseInt(quizId));
+      if (quiz && quiz.correctAnswer === answer) {
+        correctAnswers++;
+      }
+    });
+    
+    const score = Math.round((correctAnswers / quizzes.length) * 100);
+    return { json: () => ({ score }) };
+  }
+  
+  throw new Error(`Unknown API path: ${path}`);
+};
